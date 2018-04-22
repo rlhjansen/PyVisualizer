@@ -7,60 +7,64 @@ import time
 import numpy as np
 from PySide import QtCore, QtGui
 
+from FIFO import *
+
+
 SAMPLE_MAX = 32767
 SAMPLE_MIN = -(SAMPLE_MAX + 1)
 SAMPLE_RATE = 44100 # [Hz]
 NYQUIST = SAMPLE_RATE / 2
 SAMPLE_SIZE = 16 # [bit]
 CHANNEL_COUNT = 1
-BUFFER_SIZE = 5000 
+BUFFER_SIZE = 2000
 
 
 class Visualizer(QtGui.QLabel):
     """The base class for visualizers.
-    
+
     When initializing a visualizer, you must provide a get_data function which
     takes no arguments and returns a NumPy array of PCM samples that will be
     called exactly once each time a frame is drawn.
-    
+
     Note: Although this is an abstract class, it cannot have a metaclass of
     abcmeta since it is a child of QObject.
     """
-    def __init__(self, get_data, update_interval=33):
+    def __init__(self, update_interval=5, **kwargs):
         super(Visualizer, self).__init__()
-        
-        self.get_data = get_data
+
+        self.get_data = kwargs["get_data"]
         self.update_interval = update_interval #33ms ~= 30 fps
         self.sizeHint = lambda: QtCore.QSize(400, 400)
         self.setStyleSheet('background-color: black;');
         self.setWindowTitle('PyVisualizer')
-        
+
     def show(self):
         """Show the label and begin updating the visualization."""
         super(Visualizer, self).show()
         self.refresh()
-        
-        
+
+
     def refresh(self):
         """Generate a frame, display it, and set queue the next frame"""
         data = self.get_data()
         interval = self.update_interval
         if data is not None:
             t1 = time.clock()
+            #print data
             self.setPixmap(QtGui.QPixmap.fromImage(self.generate(data)))
-            #decrease the time till next frame by the processing tmie so that the framerate stays consistent
+            #decrease the time till next frame by the processing time so that the framerate stays consistent
             interval -= 1000 * (time.clock() - t1)
         if self.isVisible():
             QtCore.QTimer.singleShot(self.update_interval, self.refresh)
-        
+
     def generate(self, data):
         """This is the abstract function that child classes will override to
         draw a frame of the visualization.
-        
+
         The function takes an array of data and returns a QImage to display"""
         raise NotImplementedError()
-    
-    
+
+
 class LineVisualizer(Visualizer):
     """This visualizer will display equally sized rectangles
     alternating between black and another color, with the height of the
@@ -68,9 +72,9 @@ class LineVisualizer(Visualizer):
     influnced by amplitude.
     """
 
-    def __init__(self, get_data, columns=1):
+    def __init__(self, get_data, columns=2):
         super(LineVisualizer, self).__init__(get_data)
-        
+
         self.columns = columns
         self.brushes = [QtGui.QBrush(QtGui.QColor(255, 255, 255)), #white
                         QtGui.QBrush(QtGui.QColor(255, 0, 0)),     #red
@@ -79,12 +83,12 @@ class LineVisualizer(Visualizer):
                         QtGui.QBrush(QtGui.QColor(255, 255, 0)),   #yellow
                         QtGui.QBrush(QtGui.QColor(0, 255, 255)),   #teal
                         ]
-        self.brush = self.brushes[0]
-        
+        self.brush = self.brushes[3]
+
         self.display_odds = True
         self.display_evens = True
         self.is_fullscreen = False
-        
+
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_I:
             self.display_evens = True
@@ -114,31 +118,32 @@ class LineVisualizer(Visualizer):
                     self.columns = 10
                 elif QtCore.Qt.Key_1 <= event.key() <= QtCore.Qt.Key_9:
                     self.columns = event.key() - QtCore.Qt.Key_1 + 1
-            
+
     def generate(self, data):
         fft = np.absolute(np.fft.rfft(data, n=len(data)))
         freq = np.fft.fftfreq(len(fft), d=1./SAMPLE_RATE)
         max_freq = abs(freq[fft == np.amax(fft)][0])
         max_amplitude = np.amax(data)
-        
+
         rect_width = int(self.width() / (self.columns * 2))
-        
+
         freq_cap = 20000. #this determines the scale of lines
         if max_freq >= freq_cap:
             rect_height = 1
         else:
             rect_height = int(self.height() * max_freq / freq_cap)
             if rect_height == 2: rect_height = 1
-            
-        
+
+
         img = QtGui.QImage(self.width(), self.height(), QtGui.QImage.Format_RGB32)
         img.fill(0) #black
-        
+
+
         if rect_height >= 1:
             painter = QtGui.QPainter(img)
             painter.setPen(QtCore.Qt.NoPen)
-            painter.setBrush(self.brush) 
-            
+            painter.setBrush(self.brush)
+
             for x in xrange(0, self.width() - rect_width, rect_width * 2):
                 for y in xrange(0, self.height(), 2 * rect_height):
                     if random.randint(0, int(max_amplitude / float(SAMPLE_MAX) * 10)):
@@ -146,41 +151,66 @@ class LineVisualizer(Visualizer):
                             painter.drawRect(x, y, rect_width, rect_height)
                         if self.display_odds:
                             painter.drawRect(x + rect_width, self.height() - y - rect_height, rect_width, rect_height)
-            
+
             del painter #
-            
+
         return img
 
 class Spectrogram(Visualizer):
+    def __init__(self, **kwargs):
+        Visualizer.__init__(self, **kwargs)
+        self.fifo = FIFO(**kwargs)  #magic number
+        bincount = kwargs["bincount"]
+        self.bincount = bincount
+        self.prevbins = np.zeros(bincount)
+        self.prevprevbins = np.zeros(bincount)
+        self.curbins = np.zeros(bincount)
+
+
     def generate(self, data):
+        #print "data", data
         fft = np.absolute(np.fft.rfft(data, n=len(data)))
+        #print "fft", fft
         freq = np.fft.fftfreq(len(fft), d=1./SAMPLE_RATE)
+        #print "freq", freq
         max_freq = abs(freq[fft == np.amax(fft)][0]) / 2
         max_amplitude = np.amax(data)
-        
-        bins = np.zeros(200)
-        #indices = (len(fft) - np.logspace(0, np.log10(len(fft)), len(bins), endpoint=False).astype(int))[::-1]
+
+
+        curbins = np.zeros(self.bincount)
+        #indices = (len(fft) - np.logspace(0, np.log(len(fft)), len(bins), endpoint=False).astype(int))[::-1]
         #for i in xrange(len(bins) - 1):
         #    bins[i] = np.mean(fft[indices[i]:indices[i+1]]).astype(int)
         #bins[-1] = np.mean(fft[indices[-1]:]).astype(int)
-        
-        step = int(len(fft) / len(bins))
-        for i in xrange(len(bins)):
-            bins[i] = np.mean(fft[i:i+step])
-            
+
+        fft_len = len(fft)
+        step = int(fft_len / len(curbins))
+
+
+        for i in xrange(len(curbins)):
+            # curbins[i] = np.mean(fft[i:i + step])
+            curbins[i] = np.sum(fft[i:i + 5])
+
+        self.fifo.put(curbins)
+        #totbins = self.fifo.getsum()
+        totbins = self.fifo.getsmoothed()
+
+        #print totbins, "\n"
+
+        #print "bins", bins
+
         img = QtGui.QImage(self.width(), self.height(), QtGui.QImage.Format_RGB32)
         img.fill(0)
         painter = QtGui.QPainter(img)
         painter.setPen(QtCore.Qt.NoPen)
         painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255))) #white)
-        
-        for i, bin in enumerate(bins):
-            height = self.height() * bin / float(SAMPLE_MAX) / 10
-            width = self.width() / float(len(bins))
+
+        for i, bin in enumerate(np.nditer(totbins)):
+            height = self.height() * bin / float(SAMPLE_MAX) / 90
+            width = self.width() / float(self.bincount)
             painter.drawRect(i * width, self.height() - height, width, height)
-            
+
         del painter
-        
+
         return img
-        
-        
+

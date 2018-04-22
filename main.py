@@ -1,3 +1,8 @@
+"""Special thanks to ajalt: https://github.com/ajalt/PyVisualizer
+
+"""
+
+
 #!/usr/bin/python
 
 import sys
@@ -11,6 +16,7 @@ app = QtGui.QApplication(sys.argv)
 
 def record_qt_multimedia():
     info = QtMultimedia.QAudioDeviceInfo.defaultInputDevice()
+    print "info", info
     format = info.preferredFormat()
     format.setChannels(CHANNEL_COUNT)
     format.setChannelCount(CHANNEL_COUNT)
@@ -48,14 +54,17 @@ def record_pyaudio():
         if len(data):
             return data
     return read_data
+
 try:
     from PySide import QtMultimedia
+    print 'Using PySide'
     read_data = record_qt_multimedia()
 except ImportError:
     print 'Using PyAudio'
     import pyaudio
     read_data = record_pyaudio()
 
-window = LineVisualizer(read_data)
+
+window = Spectrogram(get_data=read_data, history=8, bincount=30, smooth_val=0.95)
 window.show()
 app.exec_()

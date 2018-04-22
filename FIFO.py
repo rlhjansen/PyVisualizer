@@ -2,10 +2,10 @@
 import numpy as np
 
 class FIFO:
-    def __init__(self, history=3, bincount=5, smoothing=True, smoothVal=0.8, **kwargs):
+    def __init__(self, history=3, bincount=5, smoothing=True, smooth_val=0.8, **kwargs):
         history = kwargs.get('history', history)
         bincount = kwargs.get('bincount', bincount)
-        smoothing = kwargs.get('smoothVal', smoothVal)
+        smoothing = kwargs.get('smooth_val', smooth_val)
         smoothing = kwargs.get('smoothing', smoothing)
 
         self.smoothing = smoothing
@@ -13,11 +13,11 @@ class FIFO:
         self.h = history
         self.bs = bincount
         self.all_bins = np.zeros([history, bincount], dtype=int)
-        self.smootharray = np.array([smoothVal**i for i in range(self.h)])
+        self.smootharray = np.array([smooth_val**i for i in range(self.h)])
 
     def put(self, new_bins):
         self.all_bins[self.index % self.h] = new_bins
-        print(self.all_bins)
+        #print(self.all_bins)
         if self.smoothing:
             self.smootharray = np.roll(self.smootharray, 1)
         self.index += 1
@@ -27,6 +27,9 @@ class FIFO:
 
     def getsmoothed(self):
         return np.dot(self.smootharray, self.all_bins)
+
+    def translate(self, old_low, old_high):
+        pass
 
 if __name__ == '__main__':
     fifo = FIFO()
