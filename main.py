@@ -64,7 +64,12 @@ except ImportError:
     import pyaudio
     read_data = record_pyaudio()
 
-
-window = Spectrogram(get_data=read_data, history=8, bincount=30, smooth_val=0.95)
+#"""
+window = Spectrogram(update_interval=0.05, get_data=read_data,
+                     fourier_count=8000, history=10, bincount=120,
+                     smooth_val=0.95, amplitude_difference=1.3,
+                     hightone_distance=1.003)
+#"""
+#window = LineVisualizer(get_data=read_data)
 window.show()
 app.exec_()
